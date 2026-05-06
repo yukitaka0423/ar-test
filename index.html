@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>LiDAR Scanner Fix</title>
+    <title>LiDAR Fixed Target Scan</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
@@ -14,13 +14,27 @@
             pointer-events: none; z-index: 1000;
         }
         #panel {
-            background: rgba(255, 255, 255, 0.95); color: #000;
+            background: rgba(255, 255, 255, 0.9); color: #000;
             padding: 20px; border-radius: 20px; text-align: center; width: 85%;
             pointer-events: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         }
-        #val { font-size: 4em; font-weight: bold; margin: 5px 0; color: #000; }
+        #val { font-size: 4em; font-weight: bold; margin: 5px 0; }
         #status { font-size: 1em; font-weight: bold; color: #d32f2f; margin-bottom: 5px; }
-        #debug-log { font-size: 0.7em; color: #666; line-height: 1.2; }
+        
+        /* 🎯 画面中央の固定照準（LiDARが当たっていない時用） */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 30px; height: 30px;
+            border: 2px solid white; border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none; z-index: 2000;
+        }
+        #crosshair::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px; background: white; border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
         .btns { pointer-events: auto; }
         button {
             padding: 20px 50px; font-size: 1.3em; border-radius: 50px;
@@ -29,11 +43,14 @@
     </style>
 </head>
 <body>
+    <!-- 画面中央の固定ガイド -->
+    <div id="crosshair"></div>
+
     <div id="ui">
         <div id="panel">
             <div id="status">AR未開始</div>
             <div id="val">0.0<span style="font-size: 0.4em;">cm</span></div>
-            <div id="debug-log">準備完了：ボタンを押してください</div>
+            <div style="font-size: 0.7em; color: #666;">中央の円を対象に合わせてください</div>
         </div>
         <div class="btns">
             <button id="start-btn">計測スタート</button>
@@ -48,8 +65,8 @@
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
 
-            // 🟢 より見やすいマーカー（太い輪っか）
-            const geometry = new THREE.TorusGeometry(0.05, 0.01, 16, 100).rotateX(-Math.PI / 2);
+            // 🟢 LiDARがヒットした時に出る輪っか
+            const geometry = new THREE.TorusGeometry(0.04, 0.005, 16, 100).rotateX(-Math.PI / 2);
             const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
             reticle = new THREE.Mesh(geometry, material);
             reticle.matrixAutoUpdate = false;
@@ -68,11 +85,11 @@
         async function startAR() {
             try {
                 const session = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['hit-test', 'local-floor']
+                    requiredFeatures: ['hit-test']
                 });
                 renderer.xr.setSession(session);
                 document.getElementById('start-btn').style.display = 'none';
-                document.getElementById('status').innerText = "空間認識中...";
+                document.getElementById('status').innerText = "空間を認識しています...";
 
                 const viewerSpace = await session.requestReferenceSpace('viewer');
                 hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
@@ -87,30 +104,33 @@
                         const hit = hits[0];
                         const pose = hit.getPose(refSpace);
 
+                        // LiDARが当たったら輪っかを表示して吸い付かせる
                         reticle.visible = true;
                         reticle.matrix.fromArray(pose.transform.matrix);
                         
-                        document.getElementById('status').innerText = "計測中";
+                        // 画面中央の固定ガイドを隠す（LiDARが仕事をしている証拠）
+                        document.getElementById('crosshair').style.borderColor = "#00ff00";
+                        document.getElementById('status').innerText = "計測中...";
                         document.getElementById('status').style.color = "#28a745";
 
                         const dist = Math.abs(pose.transform.position.z);
-                        // 推定周計計算（iPhoneの広角視野角に基づいた簡易計算）
-                        const circum = dist * 0.52 * 3.14159 * 100; 
+                        // 下腿周計の簡易計算（15Proの画角を考慮）
+                        const circum = dist * 0.55 * Math.PI * 100; 
 
                         if (circum > maxCm && circum < 80) {
                             maxCm = circum;
                             document.getElementById('val').innerHTML = `${maxCm.toFixed(1)}<span style="font-size: 0.4em;">cm</span>`;
                         }
-                        document.getElementById('debug-log').innerText = `認識成功: 距離 ${dist.toFixed(2)}m`;
                     } else {
                         reticle.visible = false;
-                        document.getElementById('debug-log').innerText = "LiDARスキャン中... 床をゆっくり映して動かしてください";
+                        document.getElementById('crosshair').style.borderColor = "white";
+                        document.getElementById('status').innerText = "床や壁を探しています...";
+                        document.getElementById('status').style.color = "#d32f2f";
                     }
                     renderer.render(scene, camera);
                 });
             } catch (e) {
-                document.getElementById('status').innerText = "エラー発生";
-                document.getElementById('debug-log').innerText = e.message;
+                alert("AR開始エラー: " + e.message);
             }
         }
         init();
