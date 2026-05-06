@@ -3,91 +3,104 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>LiDAR 最大下腿周計 (修正機能付)</title>
+    <title>LiDAR Calf Scan</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
-        #ui-layer {
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
+        /* UIレイヤーを最前面に配置 */
+        #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center;
-            pointer-events: none; z-index: 10;
+            justify-content: space-between; padding: 40px 0;
+            pointer-events: none; z-index: 9999;
         }
-        #display-box {
-            margin-top: 40px; background: rgba(0,0,0,0.7);
-            padding: 20px; border-radius: 15px; text-align: center; color: white;
-            border: 2px solid #00ff00; width: 70%;
+        #data-panel {
+            background: rgba(0, 0, 0, 0.85); color: white; padding: 25px;
+            border-radius: 25px; border: 3px solid #00ff00; text-align: center;
+            width: 80%; pointer-events: auto;
         }
-        #max-val { font-size: 3.5em; font-weight: bold; color: #00ff00; display: block; }
-        .controls {
-            position: absolute; bottom: 40px; width: 100%;
-            display: flex; justify-content: center; gap: 20px; pointer-events: auto;
-        }
+        #val { font-size: 5em; font-weight: bold; color: #00ff00; line-height: 1; }
+        .unit { font-size: 0.3em; margin-left: 5px; }
+        .btns { pointer-events: auto; display: flex; gap: 20px; }
         button {
-            padding: 15px 25px; font-size: 16px; border-radius: 50px; border: none;
-            font-weight: bold; cursor: pointer; color: white;
+            padding: 20px 40px; font-size: 1.2em; border-radius: 50px;
+            border: none; font-weight: bold; color: white; cursor: pointer;
         }
-        #btn-reset { background: #ff4757; box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4); }
-        #btn-ar { background: #2ed573; box-shadow: 0 4px 15px rgba(46, 213, 115, 0.4); }
-        #status-msg { margin-top: 10px; font-size: 0.8em; color: #aaa; }
+        #btn-ar { background: #28a745; }
+        #btn-reset { background: #dc3545; }
+        #msg { color: #aaa; margin-top: 10px; font-size: 0.9em; }
     </style>
 </head>
 <body>
-    <div id="ui-layer">
-        <div id="display-box">
-            <span style="font-size: 0.9em;">最大周計 (Max)</span>
-            <span id="max-val">0.0 cm</span>
-            <div id="status-msg">ふくらはぎを一周ゆっくり映してください</div>
+    <div id="ui">
+        <div id="data-panel">
+            <div style="font-size: 1.2em;">最大周計推計</div>
+            <div id="val">0.0<span class="unit">cm</span></div>
+            <div id="msg">ARボタンを押してください</div>
         </div>
-        
-        <div class="controls">
-            <button id="btn-reset">やり直し (Reset)</button>
+        <div class="btns">
+            <button id="btn-reset">リセット</button>
             <button id="btn-ar">AR開始</button>
         </div>
     </div>
 
     <script>
-        let scene, camera, renderer, maxCm = 0;
-        
-        init();
+        let renderer, scene, camera, hitTestSource;
+        let maxVal = 0;
+
+        async function startAR() {
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test']
+            });
+            
+            renderer.xr.setSession(session);
+            document.getElementById('btn-ar').style.display = 'none';
+            document.getElementById('msg').innerText = "ふくらはぎを中央に映して回してください";
+
+            const viewerSpace = await session.requestReferenceSpace('viewer');
+            hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+            renderer.setAnimationLoop((timestamp, frame) => {
+                if (frame && hitTestSource) {
+                    const hitResults = frame.getHitTestResults(hitTestSource);
+                    if (hitResults.length > 0) {
+                        const hit = hitResults[0];
+                        const pose = hit.getPose(renderer.xr.getReferenceSpace());
+                        
+                        // LiDARによる距離取得（メートル）
+                        const dist = Math.abs(pose.transform.position.z);
+                        
+                        // 簡易的な周計算出ロジック
+                        // 距離が近いほど精度が上がるよう視野角から幅を計算
+                        const calcCircum = dist * Math.tan((camera.fov * Math.PI / 180) / 2) * Math.PI * 100;
+
+                        if (calcCircum > maxVal && calcCircum < 70) {
+                            maxVal = calcCircum;
+                            document.getElementById('val').innerHTML = `${maxVal.toFixed(1)}<span class="unit">cm</span>`;
+                        }
+                    }
+                }
+                renderer.render(scene, camera);
+            });
+        }
 
         function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 10);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            const arBtn = document.getElementById('btn-ar');
-            const resetBtn = document.getElementById('btn-reset');
-
-            arBtn.addEventListener('click', () => {
-                navigator.xr.requestSession('immersive-ar', { requiredFeatures: ['hit-test'] }).then(onSessionStarted);
-            });
-
-            resetBtn.addEventListener('click', () => {
-                if(confirm("現在の数値をリセットして、もう一度測り直しますか？")) {
-                    maxCm = 0;
-                    document.getElementById('max-val').innerText = "0.0 cm";
-                    document.getElementById('status-msg').innerText = "リセット完了。再計測してください";
-                }
-            });
+            document.getElementById('btn-ar').onclick = startAR;
+            document.getElementById('btn-reset').onclick = () => {
+                maxVal = 0;
+                document.getElementById('val').innerHTML = `0.0<span class="unit">cm</span>`;
+            };
         }
 
-        function onSessionStarted(session) {
-            renderer.xr.setSession(session);
-            document.getElementById('btn-ar').style.display = 'none';
-            renderer.setAnimationLoop(render);
-        }
-
-        function render(timestamp, frame) {
-            if (frame) {
-                // ここにLiDARからの距離取得と最大値更新ロジック
-                // デモとして、スキャンが成功している間、微増するようなシミュレートをここで行うことも可能
-            }
-            renderer.render(scene, camera);
-        }
+        init();
     </script>
 </body>
 </html>
