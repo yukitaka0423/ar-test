@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>LiDAR Calf Scan</title>
+    <title>LiDAR Calf Scan - Visual Guide</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
-        /* UIレイヤーを最前面に配置 */
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center;
@@ -28,7 +27,7 @@
         }
         #btn-ar { background: #28a745; }
         #btn-reset { background: #dc3545; }
-        #msg { color: #aaa; margin-top: 10px; font-size: 0.9em; }
+        #msg { color: #ffeb3b; margin-top: 10px; font-size: 1em; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -45,48 +44,21 @@
     </div>
 
     <script>
-        let renderer, scene, camera, hitTestSource;
+        let renderer, scene, camera, hitTestSource, reticle;
         let maxVal = 0;
-
-        async function startAR() {
-            const session = await navigator.xr.requestSession('immersive-ar', {
-                requiredFeatures: ['hit-test']
-            });
-            
-            renderer.xr.setSession(session);
-            document.getElementById('btn-ar').style.display = 'none';
-            document.getElementById('msg').innerText = "ふくらはぎを中央に映して回してください";
-
-            const viewerSpace = await session.requestReferenceSpace('viewer');
-            hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-
-            renderer.setAnimationLoop((timestamp, frame) => {
-                if (frame && hitTestSource) {
-                    const hitResults = frame.getHitTestResults(hitTestSource);
-                    if (hitResults.length > 0) {
-                        const hit = hitResults[0];
-                        const pose = hit.getPose(renderer.xr.getReferenceSpace());
-                        
-                        // LiDARによる距離取得（メートル）
-                        const dist = Math.abs(pose.transform.position.z);
-                        
-                        // 簡易的な周計算出ロジック
-                        // 距離が近いほど精度が上がるよう視野角から幅を計算
-                        const calcCircum = dist * Math.tan((camera.fov * Math.PI / 180) / 2) * Math.PI * 100;
-
-                        if (calcCircum > maxVal && calcCircum < 70) {
-                            maxVal = calcCircum;
-                            document.getElementById('val').innerHTML = `${maxVal.toFixed(1)}<span class="unit">cm</span>`;
-                        }
-                    }
-                }
-                renderer.render(scene, camera);
-            });
-        }
 
         function init() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            
+            // マーカー（緑の輪っか）の作成
+            const geometry = new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            reticle = new THREE.Mesh(geometry, material);
+            reticle.matrixAutoUpdate = false;
+            reticle.visible = false;
+            scene.add(reticle);
+
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -97,7 +69,53 @@
             document.getElementById('btn-reset').onclick = () => {
                 maxVal = 0;
                 document.getElementById('val').innerHTML = `0.0<span class="unit">cm</span>`;
+                document.getElementById('msg').innerText = "リセットしました";
             };
+        }
+
+        async function startAR() {
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test']
+            });
+            
+            renderer.xr.setSession(session);
+            document.getElementById('btn-ar').style.display = 'none';
+            document.getElementById('msg').innerText = "空間をスキャン中...床や壁を映してください";
+
+            const viewerSpace = await session.requestReferenceSpace('viewer');
+            hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+            renderer.setAnimationLoop((timestamp, frame) => {
+                if (frame && hitTestSource) {
+                    const hitResults = frame.getHitTestResults(hitTestSource);
+                    
+                    if (hitResults.length > 0) {
+                        // LiDARが対象を認識した時の処理
+                        const hit = hitResults[0];
+                        const pose = hit.getPose(renderer.xr.getReferenceSpace());
+                        
+                        // マーカーを表示して位置を合わせる
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(pose.transform.matrix);
+                        document.getElementById('msg').innerText = "認識中！足を回して測ってください";
+                        document.getElementById('msg').style.color = "#00ff00";
+                        
+                        const dist = Math.abs(pose.transform.position.z);
+                        const calcCircum = dist * Math.tan((camera.fov * Math.PI / 180) / 2) * Math.PI * 100;
+
+                        if (calcCircum > maxVal && calcCircum < 70) {
+                            maxVal = calcCircum;
+                            document.getElementById('val').innerHTML = `${maxVal.toFixed(1)}<span class="unit">cm</span>`;
+                        }
+                    } else {
+                        // 対象を見失った時の処理
+                        reticle.visible = false;
+                        document.getElementById('msg').innerText = "対象を探しています...距離を調整してください";
+                        document.getElementById('msg').style.color = "#ffeb3b";
+                    }
+                }
+                renderer.render(scene, camera);
+            });
         }
 
         init();
