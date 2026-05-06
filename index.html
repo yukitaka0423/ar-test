@@ -3,62 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>LiDAR Calf Measurement</title>
+    <title>LiDAR Measure V3</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center;
-            justify-content: space-between; padding: 30px 0;
+            justify-content: space-between; padding: 40px 0;
             pointer-events: none; z-index: 1000;
         }
-        #info-panel {
-            /* 🎨 背景を白の半透明、文字を黒に変更 */
-            background: rgba(255, 255, 255, 0.9); 
-            color: black; 
-            padding: 20px;
-            border-radius: 20px; 
-            border: 2px solid #333; 
-            text-align: center;
-            width: 85%; 
-            pointer-events: auto;
+        #panel {
+            background: rgba(255, 255, 255, 0.9); color: #000; /* 文字は黒 */
+            padding: 20px; border-radius: 20px; text-align: center; width: 80%;
+            pointer-events: auto; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
-        #val { font-size: 4em; font-weight: bold; color: black; }
-        #debug { font-size: 0.8em; color: #555; margin-top: 5px; }
-        .btns { pointer-events: auto; display: flex; gap: 15px; margin-bottom: 20px; }
+        #val { font-size: 4em; font-weight: bold; margin: 5px 0; }
+        #status { font-size: 0.9em; font-weight: bold; color: #d32f2f; }
+        .btns { pointer-events: auto; }
         button {
-            padding: 15px 30px; font-size: 1.1em; border-radius: 30px;
-            border: none; font-weight: bold; color: white; cursor: pointer;
+            padding: 20px 40px; font-size: 1.2em; border-radius: 50px;
+            border: none; font-weight: bold; background: #28a745; color: #fff;
         }
-        #btn-ar { background: #28a745; }
-        #btn-reset { background: #dc3545; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <div id="info-panel">
-            <div>推定最大周計</div>
+        <div id="panel">
+            <div style="font-size: 1.2em;">最大周計（推定）</div>
             <div id="val">0.0<span style="font-size: 0.4em;">cm</span></div>
-            <div id="debug">準備中... AR開始を押してください</div>
+            <div id="status">ARボタンを押してください</div>
         </div>
         <div class="btns">
-            <button id="btn-reset">リセット</button>
-            <button id="btn-ar">AR開始</button>
+            <button id="start-btn">AR計測開始</button>
         </div>
     </div>
 
     <script>
-        let renderer, scene, camera, hitTestSource, reticle;
-        let maxCircum = 0;
+        let scene, camera, renderer, hitTestSource, reticle;
+        let maxCm = 0;
 
         function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
 
-            // 🎯 LiDARが捉えている場所を示すマーカー
-            const geometry = new THREE.RingGeometry(0.02, 0.03, 32).rotateX(-Math.PI / 2);
-            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // マーカーは目立つ緑
+            // 🎯 強調したマーカー（緑のドーナツ型）
+            const geometry = new THREE.RingGeometry(0.03, 0.05, 32).rotateX(-Math.PI / 2);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
             reticle = new THREE.Mesh(geometry, material);
             reticle.matrixAutoUpdate = false;
             reticle.visible = false;
@@ -70,55 +61,50 @@
             renderer.xr.enabled = true;
             document.body.appendChild(renderer.domElement);
 
-            document.getElementById('btn-ar').onclick = startAR;
-            document.getElementById('btn-reset').onclick = () => {
-                maxCircum = 0;
-                document.getElementById('val').innerHTML = `0.0<span style="font-size: 0.4em;">cm</span>`;
-            };
+            document.getElementById('start-btn').onclick = startAR;
         }
 
         async function startAR() {
-            try {
-                const session = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['hit-test']
-                });
-                renderer.xr.setSession(session);
-                document.getElementById('btn-ar').style.display = 'none';
-                
-                const viewerSpace = await session.requestReferenceSpace('viewer');
-                hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+            const session = await navigator.xr.requestSession('immersive-ar', {
+                requiredFeatures: ['hit-test']
+            });
+            renderer.xr.setSession(session);
+            document.getElementById('start-btn').style.display = 'none';
+            document.getElementById('status').innerText = "床や壁をゆっくり映して...";
 
-                renderer.setAnimationLoop((timestamp, frame) => {
-                    if (frame) {
-                        const referenceSpace = renderer.xr.getReferenceSpace();
-                        const hitTestResults = frame.getHitTestResults(hitTestSource);
+            const viewerSpace = await session.requestReferenceSpace('viewer');
+            hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
 
-                        if (hitTestResults.length > 0) {
-                            const hit = hitTestResults[0];
-                            const pose = hit.getPose(referenceSpace);
+            renderer.setAnimationLoop((timestamp, frame) => {
+                if (frame) {
+                    const refSpace = renderer.xr.getReferenceSpace();
+                    const hits = frame.getHitTestResults(hitTestSource);
 
-                            reticle.visible = true;
-                            reticle.matrix.fromArray(pose.transform.matrix);
+                    if (hits.length > 0) {
+                        const hit = hits[0];
+                        const pose = hit.getPose(refSpace);
 
-                            const distance = Math.abs(pose.transform.position.z);
-                            // 周計の計算式（簡易推計）
-                            const currentVal = distance * Math.tan(Math.PI / 6) * Math.PI * 100;
+                        // マーカーを表示
+                        reticle.visible = true;
+                        reticle.matrix.fromArray(pose.transform.matrix);
+                        
+                        document.getElementById('status').innerText = "計測可能！";
+                        document.getElementById('status').style.color = "#28a745";
 
-                            if (currentVal > maxCircum && currentVal < 65) {
-                                maxCircum = currentVal;
-                                document.getElementById('val').innerHTML = `${maxCircum.toFixed(1)}<span style="font-size: 0.4em;">cm</span>`;
-                            }
-                            document.getElementById('debug').innerText = `計測中: 距離 ${distance.toFixed(2)}m`;
-                        } else {
-                            reticle.visible = false;
-                            document.getElementById('debug').innerText = "スキャン中... 平らな面を映してください";
+                        // 距離計算 (メートル -> センチ)
+                        const dist = Math.abs(pose.transform.position.z);
+                        const circum = dist * Math.tan(camera.fov * Math.PI / 360) * 2 * Math.PI * 100;
+
+                        if (circum > maxCm && circum < 70) {
+                            maxCm = circum;
+                            document.getElementById('val').innerHTML = `${maxCm.toFixed(1)}<span style="font-size: 0.4em;">cm</span>`;
                         }
+                    } else {
+                        reticle.visible = false;
                     }
-                    renderer.render(scene, camera);
-                });
-            } catch (e) {
-                document.getElementById('debug').innerText = "エラー: " + e.message;
-            }
+                }
+                renderer.render(scene, camera);
+            });
         }
         init();
     </script>
