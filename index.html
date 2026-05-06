@@ -3,39 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>LiDAR Calf Scan - Visual Guide</title>
+    <title>LiDAR Calf Measurement</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; background: #000; }
         #ui {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; align-items: center;
-            justify-content: space-between; padding: 40px 0;
-            pointer-events: none; z-index: 9999;
+            justify-content: space-between; padding: 30px 0;
+            pointer-events: none; z-index: 1000;
         }
-        #data-panel {
-            background: rgba(0, 0, 0, 0.85); color: white; padding: 25px;
-            border-radius: 25px; border: 3px solid #00ff00; text-align: center;
-            width: 80%; pointer-events: auto;
+        #info-panel {
+            background: rgba(0, 0, 0, 0.8); color: white; padding: 20px;
+            border-radius: 20px; border: 2px solid #00ff00; text-align: center;
+            width: 85%; pointer-events: auto;
         }
-        #val { font-size: 5em; font-weight: bold; color: #00ff00; line-height: 1; }
-        .unit { font-size: 0.3em; margin-left: 5px; }
-        .btns { pointer-events: auto; display: flex; gap: 20px; }
+        #val { font-size: 4em; font-weight: bold; color: #00ff00; }
+        #debug { font-size: 0.8em; color: #ffeb3b; margin-top: 5px; }
+        .btns { pointer-events: auto; display: flex; gap: 15px; margin-bottom: 20px; }
         button {
-            padding: 20px 40px; font-size: 1.2em; border-radius: 50px;
+            padding: 15px 30px; font-size: 1.1em; border-radius: 30px;
             border: none; font-weight: bold; color: white; cursor: pointer;
         }
         #btn-ar { background: #28a745; }
         #btn-reset { background: #dc3545; }
-        #msg { color: #ffeb3b; margin-top: 10px; font-size: 1em; font-weight: bold; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <div id="data-panel">
-            <div style="font-size: 1.2em;">最大周計推計</div>
-            <div id="val">0.0<span class="unit">cm</span></div>
-            <div id="msg">ARボタンを押してください</div>
+        <div id="info-panel">
+            <div>推定最大周計</div>
+            <div id="val">0.0<span style="font-size: 0.4em;">cm</span></div>
+            <div id="debug">準備中... AR開始を押してください</div>
         </div>
         <div class="btns">
             <button id="btn-reset">リセット</button>
@@ -45,14 +44,14 @@
 
     <script>
         let renderer, scene, camera, hitTestSource, reticle;
-        let maxVal = 0;
+        let maxCircum = 0;
 
         function init() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-            
-            // マーカー（緑の輪っか）の作成
-            const geometry = new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2);
+
+            // 🎯 LiDARが捉えている場所を示す「照準器（レティクル）」
+            const geometry = new THREE.RingGeometry(0.02, 0.03, 32).rotateX(-Math.PI / 2);
             const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
             reticle = new THREE.Mesh(geometry, material);
             reticle.matrixAutoUpdate = false;
@@ -67,9 +66,8 @@
 
             document.getElementById('btn-ar').onclick = startAR;
             document.getElementById('btn-reset').onclick = () => {
-                maxVal = 0;
-                document.getElementById('val').innerHTML = `0.0<span class="unit">cm</span>`;
-                document.getElementById('msg').innerText = "リセットしました";
+                maxCircum = 0;
+                document.getElementById('val').innerHTML = `0.0<span style="font-size: 0.4em;">cm</span>`;
             };
         }
 
@@ -77,47 +75,43 @@
             const session = await navigator.xr.requestSession('immersive-ar', {
                 requiredFeatures: ['hit-test']
             });
-            
             renderer.xr.setSession(session);
             document.getElementById('btn-ar').style.display = 'none';
-            document.getElementById('msg').innerText = "空間をスキャン中...床や壁を映してください";
-
+            
             const viewerSpace = await session.requestReferenceSpace('viewer');
             hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
 
             renderer.setAnimationLoop((timestamp, frame) => {
-                if (frame && hitTestSource) {
-                    const hitResults = frame.getHitTestResults(hitTestSource);
-                    
-                    if (hitResults.length > 0) {
-                        // LiDARが対象を認識した時の処理
-                        const hit = hitResults[0];
-                        const pose = hit.getPose(renderer.xr.getReferenceSpace());
-                        
-                        // マーカーを表示して位置を合わせる
+                if (frame) {
+                    const referenceSpace = renderer.xr.getReferenceSpace();
+                    const hitTestResults = frame.getHitTestResults(hitTestSource);
+
+                    if (hitTestResults.length > 0) {
+                        const hit = hitTestResults[0];
+                        const pose = hit.getPose(referenceSpace);
+
+                        // 🟢 マーカーを物体の表面に表示
                         reticle.visible = true;
                         reticle.matrix.fromArray(pose.transform.matrix);
-                        document.getElementById('msg').innerText = "認識中！足を回して測ってください";
-                        document.getElementById('msg').style.color = "#00ff00";
-                        
-                        const dist = Math.abs(pose.transform.position.z);
-                        const calcCircum = dist * Math.tan((camera.fov * Math.PI / 180) / 2) * Math.PI * 100;
 
-                        if (calcCircum > maxVal && calcCircum < 70) {
-                            maxVal = calcCircum;
-                            document.getElementById('val').innerHTML = `${maxVal.toFixed(1)}<span class="unit">cm</span>`;
+                        // 📏 距離を取得して周計を計算
+                        const distance = Math.abs(pose.transform.position.z);
+                        // LiDARの点から、ふくらはぎの横幅を視野角(約60度)で推定するロジック
+                        const currentVal = distance * Math.tan(Math.PI / 6) * Math.PI * 100;
+
+                        if (currentVal > maxCircum && currentVal < 60) {
+                            maxCircum = currentVal;
+                            document.getElementById('val').innerHTML = `${maxCircum.toFixed(1)}<span style="font-size: 0.4em;">cm</span>`;
                         }
+                        document.getElementById('debug').innerText = `計測中: 距離 ${distance.toFixed(2)}m`;
                     } else {
-                        // 対象を見失った時の処理
                         reticle.visible = false;
-                        document.getElementById('msg').innerText = "対象を探しています...距離を調整してください";
-                        document.getElementById('msg').style.color = "#ffeb3b";
+                        document.getElementById('debug').innerText = "スキャン中... 物体を中央に映してください";
                     }
                 }
                 renderer.render(scene, camera);
             });
         }
-
         init();
     </script>
 </body>
